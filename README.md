@@ -4,6 +4,7 @@ Keeps **Player 1–4** identities stable through crossings, occlusions, players 
 
 - **How it works:** a detector and tracker produce short, *pure* tracklets. A person Re-ID model matches each tracklet against a per-player gallery seeded from a few labelled tracklets. A CP-SAT global assignment then fuses appearance, court side / team, the re-link gate and exclusivity.
 - **Full write-up:** [docs/technical_report.md](docs/technical_report.md).
+- **Demo video:** [Watch the output video with Player 1–4 IDs](https://drive.google.com/file/d/1ORy2fCMEpy_zoHTpdT7dqxvILK9tx2F3/view?usp=sharing).
 
 ## Pipeline at a glance
 
