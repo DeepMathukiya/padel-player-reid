@@ -1,0 +1,15 @@
+# Ultralytics BoT-SORT settings for a static padel camera.
+# Tuned to prefer starting a new track over a risky match: identity is decided
+# later by the Re-ID / global assignment stage, so a cut is cheap and a swap is not.
+tracker_type: botsort
+track_high_thresh: 0.4
+track_low_thresh: 0.1
+new_track_thresh: 0.5
+track_buffer: 30
+match_thresh: 0.7
+fuse_score: true
+gmc_method: none        # camera is static
+proximity_thresh: 0.5
+appearance_thresh: 0.25
+with_reid: false
+model: auto

@@ -1,0 +1,43 @@
+# Held-out validation: tracklets labelled by eye from cache/thumbnails/sheet_02/06/09/11.jpg.
+# None of these are in config/tracklet_labels.yaml (which seeds the gallery).
+labels:
+  118: 4
+  125: 1
+  127: 3
+  139: 4
+  142: 4
+  167: 1
+  170: 2
+  171: 3
+  191: 2
+  177: 3
+  402: 4
+  403: 3
+  409: 4
+  415: 3
+  430: 2
+  441: 4
+  446: 1
+  466: 2
+  480: 3
+  506: 2
+  622: 4
+  626: 3
+  639: 3
+  643: 2
+  650: 3
+  647: 1
+  654: 4
+  655: 2
+  668: 1
+  681: 2
+  735: 3
+  738: 2
+  745: 1
+  755: 4
+  757: 1
+  756: 3
+  758: 2
+  763: 1
+  766: 3
+  768: 4

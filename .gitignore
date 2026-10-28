@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Input video and model weights (large, downloaded or provided separately)
+Data/
+weights/
+*.pt
+*.pth
+
+# Pipeline intermediates and generated outputs (evaluation_data/ is kept: hand labels)
+cache/
+cache_test/
+outputs/
+outputs_test/
+*.log
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

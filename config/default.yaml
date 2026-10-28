@@ -1,0 +1,58 @@
+video_path: Data/game-24412_77-107min.mp4
+court_config: config/court.yaml
+cache_dir: cache
+output_dir: outputs
+
+# Optional frame range (inclusive start, exclusive end); null = whole video.
+start_frame: null
+end_frame: null
+
+detection:
+  model: yolo11s.pt
+  tracker_config: config/botsort_padel.yaml
+  image_size: 960                   # one run; finds both far players in 97% of frames (640: 94%)
+  mask_outside_court: true          # grey out everything outside the court ROI before YOLO (court/court_roi_mask.py)
+  gpu_preprocessing: true           # crop/mask/resize on the GPU (detection/gpu_batched_yolo.py)
+  batch_size: 8                     # frames per YOLO forward pass; tracking stays frame by frame
+  half_precision: true
+  min_confidence: 0.2
+  min_box_height_px: 40
+  max_players: 4
+
+tracking:
+  interaction_iou: 0.05          # boxes overlapping more than this = interaction
+  interaction_foot_distance_m: 1.0
+  interaction_pad_frames: 3      # extend each interaction a little on both sides
+  min_tracklet_frames: 3
+
+reid:
+  weights: weights/osnet_ain_x1_0_msmt17.pth
+  input_size: [256, 128]          # height, width
+  embed_stride: 3                 # embed every Nth frame of a tracklet
+  batch_size: 64
+  color_weight: 0.2
+  bank_size: 100
+
+labeling:
+  labels_file: config/tracklet_labels.yaml
+  min_tracklet_frames: 45         # only offer long, clean tracklets for labelling
+  thumbnails_per_tracklet: 6
+
+identity:
+  window_seconds: 5               # side/team state is decided per window
+  side_flip_cost: 100.0           # cost of a team changing ends between windows
+  side_violation_cost: 10.0       # per second a player spends on the wrong half
+  appearance_cost_scale: 10.0     # per nat of log-probability, per second of good evidence
+  max_evidence_seconds: 10.0      # appearance evidence weight is capped at this
+  unknown_cost: 4.0               # nats: unlabelled only if every allowed player is this much worse
+  relink_bonus: 3.0               # reward for same player across a gated short gap
+  assignment_rounds: 2            # round 2 re-scores with a gallery grown from round 1
+  max_speed_mps: 7.0
+  relink_max_gap_seconds: 2.0
+  border_margin_fraction: 0.02    # tracklet ends this close to the frame edge = exit
+  interpolate_max_gap_frames: 30
+  smoothing_window: 9
+  solver_time_limit_s: 120
+
+rendering:
+  draw_minimap: true

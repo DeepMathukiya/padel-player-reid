@@ -1,0 +1,57 @@
+# Player number (1-4) for each labelled tracklet id; partners: 1 & 2, 3 & 4.
+# Gallery seeds: ~10 clean tracklets per player, labelled by eye from the contact sheets
+# (cache/thumbnails/sheet_*.jpg), spread over both halves and both sides of the changeover.
+# Tracklet ids are only valid for the cached tracklets; after re-running detection they were
+# carried over by box overlap (a new tracklet inherits a label if >= 80% of its boxes match).
+#
+# Player 1: black shirt, khaki cap, red paddle            (team A)
+# Player 2: white/blond hair, black-and-white shirt, black paddle (team A)
+# Player 3: grey shirt, white shoes, cap, red/dark paddle  (team B)
+# Player 4: grey shirt, black socks, green-trim shorts, white paddle (team B)
+# Team A starts on the near half; the teams change ends around 15:40.
+teams:
+- - 1
+  - 2
+- - 3
+  - 4
+labels:
+  2: 4
+  6: 2
+  11: 3
+  23: 2
+  50: 4
+  53: 2
+  66: 2
+  211: 2
+  215: 3
+  228: 4
+  229: 4
+  233: 4
+  248: 3
+  260: 1
+  267: 1
+  437: 2
+  439: 2
+  440: 2
+  442: 2
+  456: 1
+  465: 1
+  474: 4
+  475: 1
+  485: 4
+  632: 1
+  646: 2
+  647: 1
+  648: 2
+  649: 4
+  653: 1
+  656: 4
+  658: 2
+  663: 3
+  664: 1
+  669: 1
+  670: 1
+  671: 4
+  672: 4
+  676: 4
+  677: 2
