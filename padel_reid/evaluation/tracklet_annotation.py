@@ -1,10 +1,14 @@
-"""Few-shot labelling of clean tracklets with their player number (1-4).
+"""Hand annotation of clean tracklets with their player number (1-4), for evaluation only.
+
+Inference never reads these labels; they become evaluation ground truth
+(evaluation/tracklet_label_freezer.py) or seed the label-seeded oracle baseline.
 
 Two ways to label:
   * sheets  - `python -m padel_reid label` writes contact sheets (one row of
               thumbnails per tracklet, captioned with its id) to cache/thumbnails/
-              and a template labels file; fill in `labels:` by hand.
-  * window  - `python -m padel_reid.reid.tracklet_labeler` opens an OpenCV window,
+              and a template labels file (evaluation.annotation_labels_file);
+              fill in `labels:` by hand.
+  * window  - `python -m padel_reid.evaluation.tracklet_annotation` opens an OpenCV window,
               shows one tracklet at a time; press 1-4 to label, 0 to skip, q to quit.
 
 Number the players so that partners share a team: 1 & 2 are one team, 3 & 4 the other.
@@ -20,7 +24,7 @@ import pandas as pd
 import yaml
 
 from padel_reid.common.cache_paths import CachePaths
-from padel_reid.common.video_io import iterate_frames
+from padel_reid.common.video_io import iterate_frames, read_video_info
 from padel_reid.reid.crop_quality import crop_box
 
 THUMB_HEIGHT, THUMB_WIDTH = 160, 80
@@ -65,19 +69,20 @@ def _caption_strip(tracklet_id: int, info: str, thumbs: list[np.ndarray], per_tr
     return strip
 
 
-def _info(row) -> str:
+def _info(row, fps: float) -> str:
     side = "near" if row.near_fraction > 0.5 else "far"
-    minutes, seconds = divmod(row.start_frame / 30.0, 60)
+    minutes, seconds = divmod(row.start_frame / fps, 60)
     return f"{int(minutes):02d}:{seconds:04.1f}|{side} x={row.court_x:.1f}|{row.frames} fr"
 
 
 def export_thumbnail_sheets(cfg, paths: CachePaths) -> Path:
     table = pd.read_parquet(paths.tracklets)
     summary = pd.read_parquet(paths.tracklet_summary)
-    candidates = pick_candidate_tracklets(summary, cfg.labeling.min_tracklet_frames)
-    per = cfg.labeling.thumbnails_per_tracklet
+    candidates = pick_candidate_tracklets(summary, cfg.evaluation.annotation_min_tracklet_frames)
+    per = cfg.evaluation.thumbnails_per_tracklet
     thumbs = collect_thumbnails(cfg.video_path, table, candidates["tracklet_id"].tolist(), per)
-    strips = [_caption_strip(int(r.tracklet_id), _info(r), thumbs[int(r.tracklet_id)], per)
+    fps = read_video_info(cfg.video_path).fps
+    strips = [_caption_strip(int(r.tracklet_id), _info(r, fps), thumbs[int(r.tracklet_id)], per)
               for r in candidates.itertuples()]
     out_dir = paths.thumbnails_dir
     for old in out_dir.glob("sheet_*.jpg"):
@@ -85,7 +90,7 @@ def export_thumbnail_sheets(cfg, paths: CachePaths) -> Path:
     for i in range(0, len(strips), ROWS_PER_SHEET):
         cv2.imwrite(str(out_dir / f"sheet_{i // ROWS_PER_SHEET:02d}.jpg"), np.vstack(strips[i:i + ROWS_PER_SHEET]))
 
-    labels_path = Path(cfg.labeling.labels_file)
+    labels_path = Path(cfg.evaluation.annotation_labels_file)
     if not labels_path.exists():
         labels_path.write_text(
             "# Player number (1-4) for each labelled tracklet id; partners: 1 & 2, 3 & 4.\n"
@@ -117,20 +122,21 @@ def label_in_window(cfg) -> None:
     paths = CachePaths.from_config(cfg)
     table = pd.read_parquet(paths.tracklets)
     summary = pd.read_parquet(paths.tracklet_summary)
-    labels, teams = load_labels(cfg.labeling.labels_file)
-    candidates = pick_candidate_tracklets(summary, cfg.labeling.min_tracklet_frames)
+    labels, teams = load_labels(cfg.evaluation.annotation_labels_file)
+    candidates = pick_candidate_tracklets(summary, cfg.evaluation.annotation_min_tracklet_frames)
     candidates = candidates[~candidates["tracklet_id"].isin(labels)]
-    per = cfg.labeling.thumbnails_per_tracklet
+    per = cfg.evaluation.thumbnails_per_tracklet
     thumbs = collect_thumbnails(cfg.video_path, table, candidates["tracklet_id"].tolist(), per)
+    fps = read_video_info(cfg.video_path).fps
     for r in candidates.itertuples():
-        strip = _caption_strip(int(r.tracklet_id), _info(r), thumbs[int(r.tracklet_id)], per)
+        strip = _caption_strip(int(r.tracklet_id), _info(r, fps), thumbs[int(r.tracklet_id)], per)
         cv2.imshow("label tracklet: 1-4 = player, 0 = skip, q = quit", strip)
         key = cv2.waitKey(0) & 0xFF
         if key == ord("q"):
             break
         if ord("1") <= key <= ord("4"):
             labels[int(r.tracklet_id)] = key - ord("1")
-            save_labels(cfg.labeling.labels_file, labels, teams)
+            save_labels(cfg.evaluation.annotation_labels_file, labels, teams)
     cv2.destroyAllWindows()
 
 

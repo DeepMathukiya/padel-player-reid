@@ -1,5 +1,5 @@
 # Held-out validation: tracklets labelled by eye from cache/thumbnails/sheet_02/06/09/11.jpg.
-# None of these are in config/tracklet_labels.yaml (which seeds the gallery).
+# Evaluation only. Ids are from an earlier detection run; use the frozen heldout_ground_truth.csv.
 labels:
   118: 4
   125: 1

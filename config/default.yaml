@@ -33,12 +33,16 @@ reid:
   color_weight: 0.2
   bank_size: 100
 
-labeling:
-  labels_file: config/tracklet_labels.yaml
-  min_tracklet_frames: 45         # only offer long, clean tracklets for labelling
-  thumbnails_per_tracklet: 6
-
 identity:
+  seeding:                        # label-free gallery seeds (identity/anchor_seeding.py)
+    sample_seconds: 1.0           # look for anchor sets once per second
+    min_tracklet_seconds: 1.5     # anchor members must be long, clean tracklets
+    min_evidence_seconds: 0.5
+    min_anchor_sets: 3            # fewer 4-player sets than this: fall back to 3-, then 2-player sets
+    min_margin: 0.05              # best vs. second-best mapping (summed similarity) to accept a set
+    side_continuity_seconds: 60   # a set should keep the teams on the halves of its neighbours ...
+    side_switch_penalty: 0.3      # ... unless appearance beats this (changeovers)
+    refine_iterations: 5
   window_seconds: 5               # side/team state is decided per window
   side_flip_cost: 100.0           # cost of a team changing ends between windows
   side_violation_cost: 10.0       # per second a player spends on the wrong half
@@ -56,3 +60,32 @@ identity:
 
 rendering:
   draw_minimap: true
+
+# `python -m padel_reid live`: frames are processed as they arrive and shown lag_seconds late.
+live:
+  lag_seconds: 2.0                # display delay: room to fix crossings, fill gaps and smooth before showing
+  window_seconds: 60              # each solve looks at the tracklets of the last minute
+  solve_interval_seconds: 1.0     # solve again after this much new video
+  solver_time_limit_s: 0.5
+  reseed_seconds: 30              # re-run anchor-set seeding (and grow the gallery) this often ...
+  reseed_history_seconds: null    # ... over this much recent history (null = the whole session)
+  gallery_from_shown: false       # also learn from confidently shown tracklets (self-training)
+  gate_recalibrate_seconds: 120   # recalibrate the re-link gate from clean tracklets seen so far
+  realtime_playback: true         # file sources: pace at the video fps (false = as fast as possible)
+  playback_speed: 1.0             # file sources: 2.0 = twice the video fps (no frames dropped when != 1)
+  display: true                   # OpenCV window (q or Esc to stop)
+  max_seconds: null               # stop after this much video (cameras never end); null = until q / Ctrl-C / end
+  display_width: 1280
+  write_video: true               # outputs/padel_player_ids_live.mp4
+  camera_queue_frames: 30         # cameras: 1 s of slack, then drop the oldest frame when behind
+  embed_batch: 16                 # OSNet runs once this many crops wait ...
+  embed_max_wait_frames: 15       # ... or the oldest has waited this long (each call has ~20 ms overhead)
+
+# Hand labels are used only here, never by inference.
+evaluation:
+  seed_labels_file: evaluation_data/seed_tracklet_labels.yaml          # oracle baseline + extra GT
+  seed_ground_truth: evaluation_data/seed_ground_truth.csv
+  heldout_ground_truth: evaluation_data/heldout_ground_truth.csv
+  annotation_labels_file: evaluation_data/new_tracklet_labels.yaml     # written by the `label` stage
+  annotation_min_tracklet_frames: 45                                   # only offer long, clean tracklets
+  thumbnails_per_tracklet: 6

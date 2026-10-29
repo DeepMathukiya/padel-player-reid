@@ -4,7 +4,9 @@
   botsort_raw              our pass-1 BoT-SORT ids (already in detections.parquet)
   position_lock_baek_yun   Baek & Yun-style position lock (baselines/position_lock_tracker.py)
   ours_without_side_team   our pipeline without the court-side / team cost (ablation)
-  ours_proposed            the proposed pipeline
+  ours_proposed            the proposed (label-free) pipeline
+  label_seeded_oracle      the same assignment seeded and fixed with the 40 hand labels
+                           (evaluation.seed_labels_file): an upper bound, not a production mode
 """
 
 from __future__ import annotations
@@ -17,8 +19,9 @@ import pandas as pd
 
 from padel_reid.common.cache_paths import CachePaths
 from padel_reid.common.video_io import iterate_frames
-from padel_reid.identity.identity_pipeline import assign_identities
 from padel_reid.baselines.position_lock_tracker import run_position_lock
+from padel_reid.evaluation.tracklet_annotation import load_labels
+from padel_reid.identity.identity_pipeline import assign_identities
 
 
 def gt_clip_ranges(cfg) -> list[tuple[int, int]]:
@@ -48,8 +51,9 @@ def run_bytetrack_baseline(cfg, paths: CachePaths) -> Path | None:
     return out
 
 
-def _variant(cfg, paths: CachePaths, name: str, overrides: dict) -> Path:
-    """Run the global assignment with some config values changed."""
+def _variant(cfg, paths: CachePaths, name: str, overrides: dict,
+             seed_labels_override: dict[int, int] | None = None) -> Path:
+    """Run the global assignment with some config values changed (or seeded with hand labels)."""
     variant_cfg = copy.deepcopy(cfg)
     for dotted, value in overrides.items():
         node = variant_cfg
@@ -57,7 +61,7 @@ def _variant(cfg, paths: CachePaths, name: str, overrides: dict) -> Path:
         for key in parents:
             node = node[key]
         node[leaf] = value
-    table, _ = assign_identities(variant_cfg, paths)
+    table, _ = assign_identities(variant_cfg, paths, seed_labels_override)
     out = paths.root / f"assigned_{name}.parquet"
     table.to_parquet(out)
     return out
@@ -71,6 +75,10 @@ def run_all_baselines(cfg, paths: CachePaths) -> dict[str, Path]:
 
     outputs["ours_without_side_team"] = _variant(cfg, paths, "without_side_team",
                                                  {"identity.side_violation_cost": 0.0, "identity.side_flip_cost": 0.0})
+
+    seed_labels, _ = load_labels(cfg.evaluation.seed_labels_file)
+    if seed_labels:
+        outputs["label_seeded_oracle"] = _variant(cfg, paths, "label_seeded_oracle", {}, seed_labels)
 
     bytetrack = run_bytetrack_baseline(cfg, paths)
     if bytetrack:

@@ -18,6 +18,8 @@ KNOWN_PREDICTIONS = {
     "position_lock_baek_yun": ("baseline_position_lock.parquet", "player_id"),
     "ours_without_side_team": ("assigned_without_side_team.parquet", "player_id"),
     "ours_proposed": ("assigned_detections.parquet", "player_id"),
+    "ours_live": ("assigned_live.parquet", "player_id"),                            # exactly what live mode showed
+    "label_seeded_oracle": ("assigned_label_seeded_oracle.parquet", "player_id"),   # upper bound: saw labels
 }
 
 

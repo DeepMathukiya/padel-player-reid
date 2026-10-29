@@ -33,7 +33,9 @@ METHOD_NAMES = {
     "botsort_raw": "BoT-SORT raw (tracker only)",
     "position_lock_baek_yun": "Position lock (Baek & Yun-style)",
     "ours_without_side_team": "Ours without side/team cost (ablation)",
-    "ours_proposed": "Ours (proposed)",
+    "ours_live": "Ours, live (2 s delay)",
+    "ours_proposed": "Ours (proposed, label-free)",
+    "label_seeded_oracle": "Label-seeded oracle (upper bound)",
 }
 
 

@@ -5,10 +5,21 @@ Stages (each reads/writes the cache folder, so they can be re-run independently)
     detect      pass 1: YOLO11s @960 + BoT-SORT               -> detections.parquet
     tracklets   cut raw tracks into pure tracklets            -> tracklet_detections.parquet
     embed       OSNet-AIN (MSMT17) embeddings, colour, quality -> embeddings.npz
-    label       export thumbnails / read player labels        -> config/tracklet_labels.yaml
-    assign     gallery + global CP-SAT identity assignment   -> assigned_detections.parquet
+    assign      label-free gallery seeds + global CP-SAT      -> assigned_detections.parquet
     render      output video with Player 1-4                  -> outputs/*.mp4
     evaluate    IDSW / IDF1 / MOTA / HOTA against MOT ground truth
+
+Live mode does all of the above per frame as frames arrive (padel_reid/live/):
+
+    live        detect -> track -> tracklet -> embed -> sliding-window CP-SAT -> display,
+                shown live.lag_seconds late; writes the same cache files at the end
+    refine      post-match: whole-match assignment + render on a live session's cache
+
+Inference reads no manual labels. Hand labels are evaluation-only:
+
+    label       contact sheets for annotating tracklets       -> evaluation.annotation_labels_file
+    freeze      annotated tracklets -> box-level ground truth -> evaluation_data/*.csv
+    heldout     identity accuracy on the frozen ground truth
 """
 
 from __future__ import annotations
@@ -27,8 +38,8 @@ from padel_reid.court.homography import load_court_mapping
 __all__ = [
     "load_config", "run_detection", "run_tracklets", "run_embedding", "export_labeling_sheets",
     "run_assignment", "run_render", "run_evaluation", "run_heldout_evaluation",
-    "export_ground_truth_clip", "run_analysis",
-    "run_baselines", "run_pipeline",
+    "freeze_tracklet_labels", "export_ground_truth_clip", "run_analysis",
+    "run_baselines", "run_pipeline", "run_live", "run_refinement",
 ]
 
 
@@ -36,22 +47,28 @@ def _frame_range(cfg: ConfigNode) -> tuple[int, int]:
     return resolve_frame_range(read_video_info(cfg.video_path), cfg.start_frame, cfg.end_frame)
 
 
-def build_player_detector(cfg: ConfigNode, detection_cfg: ConfigNode | None = None):
-    """PlayerDetector with the court mapping and (optionally) the pre-detection court-ROI mask."""
+def build_player_detector(cfg: ConfigNode, detection_cfg: ConfigNode | None = None,
+                          frame_size: tuple[int, int] | None = None):
+    """PlayerDetector with the court mapping and (optionally) the pre-detection court-ROI mask.
+
+    frame_size = (width, height); defaults to the configured video (a camera passes its own).
+    """
     from padel_reid.common.config_loader import load_yaml
     from padel_reid.court.court_roi_mask import build_court_roi_mask
     from padel_reid.detection.player_detector import PlayerDetector
 
     detection_cfg = detection_cfg or cfg.detection
-    info = read_video_info(cfg.video_path)
+    if frame_size is None:
+        info = read_video_info(cfg.video_path)
+        frame_size = (info.width, info.height)
     court = load_yaml(cfg.court_config)
     mapping = load_court_mapping(cfg.court_config)
     roi_mask = None
     if detection_cfg.get("mask_outside_court", True):
-        roi_mask = build_court_roi_mask(mapping, (info.width, info.height), court.roi_margin_m,
+        roi_mask = build_court_roi_mask(mapping, frame_size, court.roi_margin_m,
                                         tuple(court.person_height_px), court.roi_headroom,
                                         court.get("roi_standing_margin_m", 0.3))
-    return PlayerDetector(detection_cfg, mapping, float(court.roi_margin_m), (info.width, info.height), roi_mask)
+    return PlayerDetector(detection_cfg, mapping, float(court.roi_margin_m), frame_size, roi_mask)
 
 
 def run_detection(cfg: ConfigNode) -> pd.DataFrame:
@@ -92,7 +109,7 @@ def run_embedding(cfg: ConfigNode) -> None:
 
 
 def export_labeling_sheets(cfg: ConfigNode) -> Path:
-    from padel_reid.reid.tracklet_labeler import export_thumbnail_sheets
+    from padel_reid.evaluation.tracklet_annotation import export_thumbnail_sheets
 
     return export_thumbnail_sheets(cfg, CachePaths.from_config(cfg))
 
@@ -127,10 +144,17 @@ def run_evaluation(cfg: ConfigNode, ground_truth: str, predictions: dict[str, st
     return evaluate_against_ground_truth(cfg, CachePaths.from_config(cfg), ground_truth, predictions)
 
 
-def run_heldout_evaluation(cfg: ConfigNode, ground_truth_csv: str = "evaluation_data/heldout_ground_truth.csv") -> pd.DataFrame:
+def run_heldout_evaluation(cfg: ConfigNode) -> pd.DataFrame:
     from padel_reid.evaluation.heldout_tracklet_eval import evaluate_heldout
 
-    return evaluate_heldout(cfg, CachePaths.from_config(cfg), ground_truth_csv)
+    return evaluate_heldout(cfg, CachePaths.from_config(cfg))
+
+
+def freeze_tracklet_labels(cfg: ConfigNode, labels_file: str, out_csv: str) -> Path:
+    """Hand-labelled tracklets of the current cache -> box-level ground truth CSV."""
+    from padel_reid.evaluation.tracklet_label_freezer import freeze_tracklet_labels as _freeze
+
+    return _freeze(labels_file, CachePaths.from_config(cfg).tracklets, out_csv)
 
 
 def export_ground_truth_clip(cfg: ConfigNode, start: int, end: int, name: str) -> Path:
@@ -158,8 +182,22 @@ def run_baselines(cfg: ConfigNode) -> dict[str, Path]:
     return run_all_baselines(cfg, CachePaths.from_config(cfg))
 
 
+def run_live(cfg: ConfigNode, source: str | None = None) -> dict:
+    """Live pipeline on a file (played as if live), an RTSP/HTTP URL or a camera index."""
+    from padel_reid.live.live_pipeline import run_live as _run_live
+
+    return _run_live(cfg, source)
+
+
+def run_refinement(cfg: ConfigNode) -> pd.DataFrame:
+    """Post-match refinement of a live session: whole-match assignment + render, no re-decode for tracking."""
+    table = run_assignment(cfg)
+    run_render(cfg, output_name="padel_player_ids_refined.mp4")
+    return table
+
+
 def run_pipeline(cfg: ConfigNode) -> pd.DataFrame:
-    """Everything after manual labelling: detect -> tracklets -> embed -> assign -> render."""
+    """Offline batch pipeline, no labels needed: detect -> tracklets -> embed -> assign -> render."""
     paths = CachePaths.from_config(cfg)
     if not paths.detections.exists():
         run_detection(cfg)

@@ -12,17 +12,21 @@ Every tracklet gets exactly one of {Player 1..4, unknown}. The solver minimises
   unknown     - leaving a tracklet unlabelled costs unknown_cost nats x evidence
 
 subject to
-  exclusivity - tracklets that overlap in time never share a player
+  exclusivity - tracklets with boxes in the same frame never share a player; tracklets
+                whose time spans only interleave (a tracker flicker: old and new track
+                alternating for a few frames) may, if the handover is short and reachable
   speed limit - two tracklets cannot share a player if moving from the end of one
                 to the start of the other would exceed max_speed_mps (pairs that
                 are an exit followed by an entry, or are cut off by the frame,
                 are exempt)
-  labels      - manually labelled tracklets are fixed
+  labels      - fixed tracklets keep their player (seed reference; in live mode also
+                every tracklet already shown on screen)
+  sides       - live mode: per-window team sides already shown are fixed
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -47,6 +51,8 @@ class AssignmentInputs:
     exits: set[int]
     entries: set[int]
     fps: float
+    fixed_sides: dict[int, bool] = field(default_factory=dict)   # window -> team A near (live)
+    exclusivity: list[list[int]] | None = None   # from exclusivity_constraints(); None = time-span overlap
 
 
 @dataclass
@@ -73,6 +79,49 @@ def _overlap_cliques(summary: pd.DataFrame) -> list[list[int]]:
     return cliques
 
 
+MAX_HANDOVER_FRAMES = 10   # interleaved time spans longer than this always count as two people
+
+
+@dataclass
+class Exclusivity:
+    cliques: list[list[int]]              # each: at most one tracklet per player
+    pairs: set[tuple[int, int]]           # every (a, b), a < b, that may not share a player
+
+
+def exclusivity_constraints(table: pd.DataFrame, summary: pd.DataFrame, fps: float,
+                            max_speed_mps: float) -> Exclusivity:
+    """Who cannot be the same player, from actual co-presence instead of time-span overlap.
+
+    Time-span overlap is too strict: when BoT-SORT flickers (old and new track ids
+    alternating for a few frames), the two tracklets' spans overlap although they are
+    never in the same frame, and a live run that already showed the old one as Player k
+    could then never give the new one Player k. Such interleaved pairs may share a
+    player if the overlap is short and the handover position is reachable.
+    """
+    cliques, seen = [], set()
+    for ids in table.groupby("frame")["tracklet_id"].agg(lambda s: tuple(sorted(set(s)))):
+        if len(ids) > 1 and ids not in seen:
+            seen.add(ids)
+            cliques.append(list(ids))
+    pairs = {(a, b) for clique in cliques for i, a in enumerate(clique) for b in clique[i + 1:]}
+
+    ordered = summary["tracklet_id"].to_numpy()[np.argsort(summary["start_frame"].to_numpy(), kind="stable")]
+    for i, a in enumerate(ordered):
+        for b in ordered[i + 1:]:
+            if summary.at[b, "start_frame"] > summary.at[a, "end_frame"]:
+                break
+            pair = (min(a, b), max(a, b))
+            if pair in pairs:
+                continue
+            overlap = int(min(summary.at[a, "end_frame"], summary.at[b, "end_frame"])
+                          - summary.at[b, "start_frame"] + 1)
+            if overlap > MAX_HANDOVER_FRAMES or speed_conflict(summary, a, b, overlap, fps, max_speed_mps,
+                                                               set(), set()):
+                pairs.add(pair)
+                cliques.append(list(pair))
+    return Exclusivity(cliques, pairs)
+
+
 def speed_conflict(summary: pd.DataFrame, a: int, b: int, gap_frames: int, fps: float, max_speed_mps: float,
                    exits: set[int], entries: set[int]) -> bool:
     """True if one player cannot get from the end of tracklet a to the start of b in time.
@@ -88,7 +137,8 @@ def speed_conflict(summary: pd.DataFrame, a: int, b: int, gap_frames: int, fps: 
 
 
 def drop_conflicting_labels(labels: dict[int, int], summary: pd.DataFrame, fps: float, max_speed_mps: float,
-                            relink_max_gap: int, exits: set[int], entries: set[int]) -> dict[int, int]:
+                            relink_max_gap: int, exits: set[int], entries: set[int],
+                            exclusive_pairs: set[tuple[int, int]] | None = None) -> dict[int, int]:
     """Remove manual labels that contradict a hard constraint (keeps the longer tracklet).
 
     Two same-player labels on tracklets that overlap in time (usually a brief duplicate
@@ -102,7 +152,10 @@ def drop_conflicting_labels(labels: dict[int, int], summary: pd.DataFrame, fps: 
         for b in ordered[i + 1:]:
             if a not in kept or b not in kept or kept[a] != kept[b]:
                 continue
-            overlap = summary.at[b, "start_frame"] <= summary.at[a, "end_frame"]
+            if exclusive_pairs is None:
+                overlap = summary.at[b, "start_frame"] <= summary.at[a, "end_frame"]
+            else:
+                overlap = (min(a, b), max(a, b)) in exclusive_pairs
             gap = int(summary.at[b, "start_frame"] - summary.at[a, "end_frame"])
             too_fast = 0 < gap <= relink_max_gap and speed_conflict(summary, a, b, gap, fps, max_speed_mps,
                                                                     exits, entries)
@@ -142,7 +195,7 @@ def solve_global_assignment(inputs: AssignmentInputs, identity_cfg) -> Assignmen
         if t in unknown:
             model.Add(x[t, player] == 1)
 
-    for clique in _overlap_cliques(summary):
+    for clique in inputs.exclusivity if inputs.exclusivity is not None else _overlap_cliques(summary):
         for k in range(NUM_PLAYERS):
             model.AddAtMostOne([x[t, k] for t in clique])
 
@@ -167,8 +220,11 @@ def solve_global_assignment(inputs: AssignmentInputs, identity_cfg) -> Assignmen
 
     # Team sides per window: team_a_near[w] == 1 means team A is on the near half.
     counts = inputs.window_counts
-    windows = sorted(counts["window"].unique().tolist())
+    # Fixed windows take part in the flip cost, so a live window continues the committed state.
+    windows = sorted(set(counts["window"].unique().tolist()) | set(inputs.fixed_sides))
     team_a_near = {w: model.NewBoolVar(f"side_{w}") for w in windows}
+    for w, a_near in inputs.fixed_sides.items():
+        model.Add(team_a_near[w] == int(a_near))
     for prev, cur in zip(windows, windows[1:]):
         flip = model.NewBoolVar(f"flip_{cur}")
         model.Add(team_a_near[cur] - team_a_near[prev] <= flip)

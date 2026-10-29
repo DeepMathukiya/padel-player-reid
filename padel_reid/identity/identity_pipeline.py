@@ -1,23 +1,26 @@
-"""Turn pure tracklets + embeddings into persistent Player 1-4 labels."""
+"""Turn pure tracklets + embeddings into persistent Player 1-4 labels.
+
+No manual labels are read here: the gallery is seeded from anchor sets of
+coexisting players (identity/anchor_seeding.py). Hand labels exist only for
+evaluation; the label-seeded oracle baseline passes them in explicitly.
+"""
 
 from __future__ import annotations
-
-import warnings
 
 import numpy as np
 import pandas as pd
 
 from padel_reid.common.cache_paths import CachePaths
 from padel_reid.common.video_io import read_video_info
+from padel_reid.identity.anchor_seeding import SeedResult, discover_seed_labels
 from padel_reid.identity.changeover_detector import changeovers_from_sides
 from padel_reid.identity.exit_reentry_handler import exit_entry_flags, find_exit_reentry_events
 from padel_reid.identity.gap_interpolation import fill_short_gaps, smooth_boxes
 from padel_reid.identity.global_assignment import (AssignmentInputs, drop_conflicting_labels,
-                                                   solve_global_assignment)
+                                                   exclusivity_constraints, solve_global_assignment)
 from padel_reid.identity.player_gallery import NUM_PLAYERS, PlayerGallery, scores_to_log_prob
 from padel_reid.identity.predictive_relinker import calibrate_gate, find_relink_candidates
 from padel_reid.identity.tracklet_descriptors import TrackletDescriptors, build_tracklet_descriptors
-from padel_reid.reid.tracklet_labeler import load_labels
 
 MAX_RELATIVE_COST = 6.0      # nats; caps how much one tracklet's appearance can dominate
 
@@ -57,21 +60,6 @@ def window_side_counts(table: pd.DataFrame, window_frames: int) -> pd.DataFrame:
     return counts[["tracklet_id", "window", "near_frames", "far_frames"]]
 
 
-def bootstrap_labels(descriptors: TrackletDescriptors, summary: pd.DataFrame, min_frames: int) -> dict[int, int]:
-    """No manual labels: cluster long clean tracklets into 4 players (k-means).
-
-    Lower quality than few-shot labels; teams may also come out wrong.
-    """
-    from sklearn.cluster import KMeans
-
-    warnings.warn("No tracklet labels found: bootstrapping players by clustering. "
-                  "Label ~10 tracklets per player for reliable results.")
-    clean = summary[(summary["frames"] >= min_frames) & ~summary["in_interaction"]]["tracklet_id"].to_numpy()
-    features = np.hstack([descriptors.embedding[clean], 0.5 * descriptors.color[clean]])
-    clusters = KMeans(NUM_PLAYERS, n_init=10, random_state=0).fit_predict(features)
-    return {int(t): int(c) for t, c in zip(clean, clusters)}
-
-
 def confident_assignments(labels: dict[int, int], cost: np.ndarray, summary: pd.DataFrame,
                           evidence_seconds: np.ndarray, margin: float = 1.0) -> dict[int, int]:
     """Tracklets whose assigned player is clearly the best appearance match."""
@@ -84,7 +72,10 @@ def confident_assignments(labels: dict[int, int], cost: np.ndarray, summary: pd.
     return out
 
 
-def assign_identities(cfg, paths: CachePaths) -> tuple[pd.DataFrame, dict]:
+def assign_identities(cfg, paths: CachePaths,
+                      seed_labels_override: dict[int, int] | None = None) -> tuple[pd.DataFrame, dict]:
+    """seed_labels_override (tracklet -> player 0-3) is for the label-seeded oracle baseline only:
+    the labels then both seed the gallery and are fixed, as in the original few-shot setup."""
     info = read_video_info(cfg.video_path)
     fps = info.fps
     table = pd.read_parquet(paths.tracklets)
@@ -95,14 +86,19 @@ def assign_identities(cfg, paths: CachePaths) -> tuple[pd.DataFrame, dict]:
     full = build_tracklet_descriptors(table, embeddings, num)
     evidence_seconds = full.evidence * cfg.reid.embed_stride / fps
 
-    labels, teams = load_labels(cfg.labeling.labels_file)
-    if not labels:
-        labels = bootstrap_labels(full, summary, cfg.labeling.min_tracklet_frames)
-    labels = {t: k for t, k in labels.items() if t < num}
+    if seed_labels_override is None:
+        seed = discover_seed_labels(table, summary, full, evidence_seconds, fps, cfg)
+    else:
+        labels = {t: k for t, k in seed_labels_override.items() if t < num}
+        seed = SeedResult(labels, labels, diagnostics={"method": "label_override", "seed_tracklets": len(labels)})
+    teams = seed.teams
     exits, entries = exit_entry_flags(summary)
-    labels = drop_conflicting_labels(labels, summary, fps, cfg.identity.max_speed_mps,
-                                     int(cfg.identity.relink_max_gap_seconds * fps), exits, entries)
-    gallery = build_gallery(full, labels, summary, cfg)
+    exclusivity = exclusivity_constraints(table, summary, fps, cfg.identity.max_speed_mps)
+    labels = drop_conflicting_labels(seed.fixed_labels, summary, fps, cfg.identity.max_speed_mps,
+                                     int(cfg.identity.relink_max_gap_seconds * fps), exits, entries,
+                                     exclusivity.pairs)
+    seed_labels = {**seed.seed_labels, **labels}
+    gallery = build_gallery(full, seed_labels, summary, cfg)
 
     gate, _ = calibrate_gate(table, fps, cfg.identity.max_speed_mps)
     gate.to_json(paths.root / "relink_gate.json")
@@ -114,15 +110,17 @@ def assign_identities(cfg, paths: CachePaths) -> tuple[pd.DataFrame, dict]:
         result = solve_global_assignment(AssignmentInputs(
             summary=summary, appearance_cost=cost, evidence_seconds=evidence_seconds,
             window_counts=counts, relink_candidates=candidates, fixed_labels=labels, teams=teams,
-            exits=exits, entries=entries, fps=fps), cfg.identity)
+            exits=exits, entries=entries, fps=fps, exclusivity=exclusivity.cliques), cfg.identity)
         print(f"round {round_index + 1}: {result.status}, objective {result.objective:.1f}, "
               f"{len(result.labels)}/{num} tracklets labelled")
         if round_index + 1 < cfg.identity.assignment_rounds:
-            grown = {**confident_assignments(result.labels, cost, summary, evidence_seconds), **labels}
+            # Soft seeds the solver overruled are dropped so a seeding mistake does not persist.
+            agreed = {t: k for t, k in seed_labels.items() if result.labels.get(t) == k}
+            grown = {**confident_assignments(result.labels, cost, summary, evidence_seconds), **agreed, **labels}
             gallery = build_gallery(full, grown, summary, cfg)
     assigned = result.labels
     events: dict = {"changeovers": changeovers_from_sides(result.team_a_near, window_frames, fps, teams),
-                    "solver_status": result.status}
+                    "solver_status": result.status, "seeding": seed.diagnostics}
 
     exit_events = find_exit_reentry_events(summary, assigned, fps)
     events["exit_reentry"] = exit_events

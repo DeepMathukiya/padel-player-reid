@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import warnings
 
 import yaml
@@ -10,7 +11,7 @@ import yaml
 from padel_reid import api
 
 STAGES = ["detect", "tracklets", "embed", "label", "assign", "render", "gtclip", "evaluate",
-          "heldout", "analyze", "charts", "baselines", "run"]
+          "freeze", "heldout", "analyze", "charts", "baselines", "run", "live", "refine"]
 
 
 def _parse_overrides(items: list[str]) -> dict:
@@ -32,7 +33,9 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--output", default="padel_player_ids.mp4", help="render: output file name")
     parser.add_argument("--start", type=int, help="render: first frame")
     parser.add_argument("--end", type=int, help="render: end frame (exclusive)")
-    parser.add_argument("--gt", help="evaluate: MOT-format ground-truth file")
+    parser.add_argument("--gt", help="evaluate: MOT-format ground-truth file; freeze: output CSV")
+    parser.add_argument("--source", help="live: video file, rtsp/http URL or camera index (default video_path)")
+    parser.add_argument("--labels", help="freeze: tracklet labels YAML (default evaluation.annotation_labels_file)")
     args = parser.parse_args(argv)
 
     cfg = api.load_config(args.config, _parse_overrides(args.set))
@@ -53,6 +56,9 @@ def main(argv: list[str] | None = None) -> None:
         print("Clip + pre-annotation written to", api.export_ground_truth_clip(cfg, args.start, args.end, name))
     elif args.stage == "evaluate":
         print(api.run_evaluation(cfg, args.gt).to_string())
+    elif args.stage == "freeze":
+        labels = args.labels or cfg.evaluation.annotation_labels_file
+        print("Ground truth written to", api.freeze_tracklet_labels(cfg, labels, args.gt or labels.removesuffix(".yaml") + ".csv"))
     elif args.stage == "heldout":
         print(api.run_heldout_evaluation(cfg).round(4).to_string())
     elif args.stage == "charts":
@@ -64,6 +70,10 @@ def main(argv: list[str] | None = None) -> None:
         print(api.run_baselines(cfg))
     elif args.stage == "run":
         api.run_pipeline(cfg)
+    elif args.stage == "live":
+        print(json.dumps(api.run_live(cfg, args.source), indent=2))
+    elif args.stage == "refine":
+        api.run_refinement(cfg)
 
 
 if __name__ == "__main__":

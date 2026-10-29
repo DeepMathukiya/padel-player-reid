@@ -1,11 +1,13 @@
-"""Identity evaluation on held-out, hand-labelled tracklets.
+"""Identity evaluation on hand-labelled tracklets.
 
 Cheaper than full MOT ground truth: tracklets were labelled by eye from the contact
-sheets (evaluation_data/heldout_tracklet_labels.yaml) and none of them seed the
-gallery. Their detections were frozen into box-level ground truth
-(evaluation_data/heldout_ground_truth.csv), so the evaluation does not depend on
-tracklet ids and stays valid when detection is re-run. Each method's predicted box in the same frame (IoU >= 0.5) is matched,
-and we report:
+sheets and frozen into box-level ground truth, so the evaluation does not depend
+on tracklet ids and stays valid when detection is re-run. Two sets are scored:
+  * heldout - evaluation_data/heldout_ground_truth.csv (40 tracklets)
+  * seed    - evaluation_data/seed_ground_truth.csv (40 tracklets that used to seed
+              the gallery). Inference is label-free, so they are unseen by every
+              method except the label-seeded oracle, which is left out on this set.
+Each method's predicted box in the same frame (IoU >= 0.5) is matched, and we report:
   * identity accuracy - share of GT boxes whose predicted id maps to the right
                         player under the best one-to-one id->player mapping
                         (fair to methods whose ids are arbitrary)
@@ -94,16 +96,30 @@ def mot_metrics_heldout(gt: pd.DataFrame, pred: pd.DataFrame) -> dict:
                                    "identities_maintained_95pct", "identities_total")}
 
 
-def evaluate_heldout(cfg, paths: CachePaths, ground_truth_csv: str = "evaluation_data/heldout_ground_truth.csv") -> pd.DataFrame:
-    gt = heldout_ground_truth(ground_truth_csv)
-    rows = []
-    for name, (file, column) in KNOWN_PREDICTIONS.items():
-        path = paths.root / file
-        if path.exists():
-            pred = _load_prediction(path, column)
-            rows.append({"method": name, **evaluate_identity(gt, pred), **mot_metrics_heldout(gt, pred)})
-    report = pd.DataFrame(rows).set_index("method")
+# Ground-truth sets, and the methods that saw their labels (excluded from that set).
+GROUND_TRUTH_SETS = {
+    "heldout": ("heldout_ground_truth", set()),
+    "seed": ("seed_ground_truth", {"label_seeded_oracle"}),
+}
+
+
+def evaluate_heldout(cfg, paths: CachePaths) -> pd.DataFrame:
+    """One report per GT set (outputs/metrics/<set>_identity.csv), concatenated with a gt_set index level."""
     out = Path(cfg.output_dir) / "metrics"
     out.mkdir(parents=True, exist_ok=True)
-    report.to_csv(out / "heldout_identity.csv")
-    return report
+    reports = {}
+    for gt_set, (config_key, excluded) in GROUND_TRUTH_SETS.items():
+        ground_truth_csv = Path(cfg.evaluation[config_key])
+        if not ground_truth_csv.exists():
+            print(f"{gt_set}: {ground_truth_csv} not found, skipped")
+            continue
+        gt = heldout_ground_truth(ground_truth_csv)
+        rows = []
+        for name, (file, column) in KNOWN_PREDICTIONS.items():
+            path = paths.root / file
+            if path.exists() and name not in excluded:
+                pred = _load_prediction(path, column)
+                rows.append({"method": name, **evaluate_identity(gt, pred), **mot_metrics_heldout(gt, pred)})
+        reports[gt_set] = pd.DataFrame(rows).set_index("method")
+        reports[gt_set].to_csv(out / f"{gt_set}_identity.csv")
+    return pd.concat(reports, names=["gt_set"])

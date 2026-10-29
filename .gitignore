@@ -15,8 +15,11 @@ weights/
 # Pipeline intermediates and generated outputs (evaluation_data/ is kept: hand labels)
 cache/
 cache_test/
+cache_live/
 outputs/
 outputs_test/
+outputs_live/
+cache_manual_run/
 *.log
 
 # Editors / OS

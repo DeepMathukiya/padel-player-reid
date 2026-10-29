@@ -19,6 +19,10 @@ from padel_reid.court.court_side import court_side, inside_court_roi
 from padel_reid.court.homography import CourtMapping
 
 
+DETECTION_COLUMNS = ["frame", "raw_track_id", "x1", "y1", "x2", "y2", "confidence",
+                     "foot_x", "foot_y", "court_x", "court_y", "truncated_bottom"]
+
+
 class DetectionBatch:
     """The minimal Results-like object the Ultralytics trackers consume."""
 
@@ -138,17 +142,15 @@ class PlayerDetector:
             for (frame_index, frame), (raw_xyxy, raw_conf) in zip(batch, detections):
                 progress.update()
                 xyxy, conf = self.filter_detections(raw_xyxy, raw_conf)
-                rows.extend(self._track_frame(tracker, frame_index, frame, xyxy, conf))
+                rows.extend(self.track_frame(tracker, frame_index, frame, xyxy, conf))
         progress.close()
-        table = pd.DataFrame(rows, columns=[
-            "frame", "raw_track_id", "x1", "y1", "x2", "y2", "confidence",
-            "foot_x", "foot_y", "court_x", "court_y", "truncated_bottom",
-        ])
+        table = pd.DataFrame(rows, columns=DETECTION_COLUMNS)
         table["side"] = court_side(table["court_y"].to_numpy())
         return table
 
-    def _track_frame(self, tracker, frame_index: int, frame: np.ndarray, xyxy: np.ndarray,
-                     conf: np.ndarray) -> list[tuple]:
+    def track_frame(self, tracker, frame_index: int, frame: np.ndarray, xyxy: np.ndarray,
+                    conf: np.ndarray) -> list[tuple]:
+        """One BoT-SORT step; rows as in DETECTION_COLUMNS (without `side`). Used by run() and live mode."""
         tracked = tracker.update(DetectionBatch(xyxy, conf), frame)
         if len(tracked) == 0:
             return []

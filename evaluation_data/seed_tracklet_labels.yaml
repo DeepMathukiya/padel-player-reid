@@ -1,5 +1,6 @@
 # Player number (1-4) for each labelled tracklet id; partners: 1 & 2, 3 & 4.
-# Gallery seeds: ~10 clean tracklets per player, labelled by eye from the contact sheets
+# Evaluation only (inference is label-free): frozen into seed_ground_truth.csv, and used by the
+# label-seeded oracle baseline. Formerly the gallery seeds: ~10 clean tracklets per player, labelled by eye from the contact sheets
 # (cache/thumbnails/sheet_*.jpg), spread over both halves and both sides of the changeover.
 # Tracklet ids are only valid for the cached tracklets; after re-running detection they were
 # carried over by box overlap (a new tracklet inherits a label if >= 80% of its boxes match).
