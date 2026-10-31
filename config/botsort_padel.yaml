@@ -2,9 +2,13 @@
 # Tuned to prefer starting a new track over a risky match: identity is decided
 # later by the Re-ID / global assignment stage, so a cut is cheap and a swap is not.
 tracker_type: botsort
-track_high_thresh: 0.4
+# Small far players are often detected at 0.2-0.5 (median ~0.55 on the portrait clip):
+# with 0.4 / 0.5 about a quarter of them were never matched in the first pass and
+# almost half could not start a track. Detections are already limited to the court
+# and 2 per half, so lower thresholds don't let spectators in.
+track_high_thresh: 0.25
 track_low_thresh: 0.1
-new_track_thresh: 0.5
+new_track_thresh: 0.3
 track_buffer: 30
 match_thresh: 0.7
 fuse_score: true

@@ -1,53 +1,54 @@
-# Court calibration for Data/game-24412_77-107min.mp4 (1920x1080, static fisheye camera).
+# Court calibration for Data/court2.mp4 (1920x1080 frame,
+# static fisheye camera). The clip is portrait footage pillarboxed in the frame: the
+# picture only spans x ~553-1366, the rest is white bars (masked out by the court ROI).
+# The calibration for Data/game-24412_77-107min.mp4 is kept in court_game-24412.yaml,
+# and the one for Data/court3.mp4 in court_court3.yaml.
 #
 # Court coordinates are metres: x across the court (0 = left glass as seen from the
 # camera, 10 = right glass), y along the court (0 = far back wall, 10 = net,
-# 20 = near back wall). The near back wall is outside the frame; the bottom of the
-# image is roughly the near service line.
+# 20 = near back wall). In this clip the whole court is visible; the near back wall
+# base is the curved edge around image row ~1000.
 #
 # Image points were read off frame 0 at full resolution. The lens has strong barrel
 # distortion, so a single radial coefficient (k1) is fitted together with the
-# homography; reprojection error of the landmarks is ~0.1 m.
+# homography (k1 sits at the -0.6 search bound here); reprojection error of the
+# landmarks is ~0.16 m (max ~0.25 m).
 
 image_size: [1920, 1080]
 
 landmarks:            # [image_x, image_y, court_x, court_y]
-  far_back_left:      [716, 362, 0.0, 0.0]
-  far_back_right:     [1180, 365, 10.0, 0.0]
-  far_service_left:   [672, 399, 0.0, 3.05]
-  far_service_centre: [947, 396, 5.0, 3.05]
-  far_service_right:  [1220, 402, 10.0, 3.05]
-  net_centre:         [947, 548, 5.0, 10.0]
-  near_service_left:  [215, 942, 0.0, 16.95]
-  near_service_centre: [944, 1067, 5.0, 16.95]
-  near_service_right: [1667, 950, 10.0, 16.95]
+  far_back_left:      [820, 317, 0.0, 0.0]
+  far_back_right:     [1052, 317, 10.0, 0.0]
+  far_service_left:   [808, 339, 0.0, 3.05]
+  far_service_centre: [933, 335, 5.0, 3.05]
+  far_service_right:  [1077, 339, 10.0, 3.05]
+  net_centre:         [934, 416, 5.0, 10.0]
+  near_service_left:  [574, 670, 0.0, 16.95]
+  near_service_centre: [937, 699, 5.0, 16.95]
+  near_service_right: [1309, 657, 10.0, 16.95]
 
 # Extra points on the (straight) near service line, court_y = 16.95. They only
 # constrain the lens distortion fit.
 near_service_line_samples:
-  - [300, 969]
-  - [400, 999]
-  - [500, 1021]
-  - [600, 1040]
-  - [700, 1053]
-  - [800, 1063]
-  - [900, 1067]
-  - [1000, 1067]
-  - [1100, 1063]
-  - [1200, 1054]
-  - [1300, 1041]
-  - [1400, 1023]
-  - [1500, 1000]
-  - [1600, 971]
+  - [665, 685]
+  - [700, 690]
+  - [790, 697]
+  - [1100, 689]
+  - [1200, 676]
+  - [1250, 668]
 
 # Court ROI. Before detection, everything outside the court (+ margin) and the space
 # a standing player occupies above it is painted grey, so the players on the
 # neighbouring court seen through the glass are never detected. After detection,
 # boxes whose foot point maps outside the court + margin are dropped as well.
 roi_margin_m: 1.5
-# Player box height in pixels vs the image row of the feet (fitted on this video:
-# ~100 px at the far baseline, ~340 px near the camera), and the extra headroom
-# kept above it for jumps and raised paddles.
-person_height_px: [0.40, -45.0]   # height = 0.40 * foot_row - 45
+# Player box height in pixels vs the image row of the feet (upper envelope of YOLO
+# boxes on this video: ~60 px at the far baseline, ~160 px at the near service line),
+# and the extra headroom kept above it for jumps and raised paddles.
+person_height_px: [0.25, -27.0]   # height = 0.25 * foot_row - 27
 roi_headroom: 1.15
 roi_standing_margin_m: 0.3        # bodies are only extended upward from 0.3 m past the walls
+# Portrait footage pillarboxed in a 1920x1080 frame: only x ~553-1366 holds picture.
+# The ROI is clipped to it, so YOLO's input is the court, not the white bars
+# (without it the crop was ~1888 px wide and the far players were shrunk ~2x).
+picture_box: [553, 0, 1366, 1080]   # x0, y0, x1, y1

@@ -13,14 +13,13 @@ weights/
 *.pth
 
 # Pipeline intermediates and generated outputs (evaluation_data/ is kept: hand labels)
-cache/
-cache_test/
-cache_live/
-outputs/
-outputs_test/
-outputs_live/
-cache_manual_run/
+# (glob covers per-run variants like cache_court3/, outputs_live_region/)
+cache*/
+outputs*/
 *.log
+
+# Generated code-review reports
+code_review_*.md
 
 # Editors / OS
 .vscode/

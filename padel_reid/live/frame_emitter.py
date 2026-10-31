@@ -164,7 +164,9 @@ class FrameEmitter:
             exits = {(labels[t] + 1, int(s["end_frame"])) for t, s in history.closed_summary.items()
                      if t in labels and s["ends_at_border"] and s["end_frame"] >= start}
             last_ended = {p: history.closed_summary.get(t) for p, t in self.last_tracklet.items()}
-            note = None if state.reference else "identifying players: waiting for all 4 in clear view"
+            note = None if state.reference else (
+                "identifying players: waiting for a player in clear view" if self.cfg.live.region_numbering
+                else "identifying players: waiting for all 4 in clear view")
 
         boxes = post_process_slice(rows, labels, exits, first, last, self.interp,
                                    self.cfg.identity.smoothing_window)

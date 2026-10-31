@@ -67,8 +67,9 @@ def build_player_detector(cfg: ConfigNode, detection_cfg: ConfigNode | None = No
     if detection_cfg.get("mask_outside_court", True):
         roi_mask = build_court_roi_mask(mapping, frame_size, court.roi_margin_m,
                                         tuple(court.person_height_px), court.roi_headroom,
-                                        court.get("roi_standing_margin_m", 0.3))
-    return PlayerDetector(detection_cfg, mapping, float(court.roi_margin_m), frame_size, roi_mask)
+                                        court.get("roi_standing_margin_m", 0.3), court.get("picture_box"))
+    return PlayerDetector(detection_cfg, mapping, float(court.roi_margin_m), frame_size, roi_mask,
+                          cfg.get("device", "cuda"))
 
 
 def run_detection(cfg: ConfigNode) -> pd.DataFrame:

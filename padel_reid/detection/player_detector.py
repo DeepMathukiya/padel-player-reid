@@ -1,10 +1,11 @@
 """Pass 1 detection: one YOLO11 person-detection run per frame + Ultralytics BoT-SORT.
 
-The frame is run once at 960 px, which finds both small far-side players as
-reliably as a separate high-resolution far-court crop did (97% of frames on 300
-sampled frames) at the same speed. Detections are filtered (court ROI, size,
-partial duplicates, top-4 by confidence) and only then given to BoT-SORT, so
-people on the neighbouring court never take a track id.
+The court-ROI crop is run once at `detection.image_size`. On game-24412 at 960 px
+(YOLO11s) that found both small far-side players as reliably as a separate
+high-resolution far-court crop did (97% of frames on 300 sampled frames) at the
+same speed. Detections are filtered (court ROI, size, partial duplicates, at most
+2 per half and 4 in all by confidence) and only then given to BoT-SORT, so people
+on the neighbouring court never take a track id.
 """
 
 from __future__ import annotations
@@ -78,7 +79,7 @@ def foot_points(xyxy: np.ndarray) -> np.ndarray:
 
 class PlayerDetector:
     def __init__(self, detection_cfg, court_mapping: CourtMapping, roi_margin_m: float,
-                 frame_size: tuple[int, int], roi_mask: CourtRoiMask | None = None):
+                 frame_size: tuple[int, int], roi_mask: CourtRoiMask | None = None, device: str = "cuda"):
         from ultralytics import YOLO
 
         self.cfg = detection_cfg
@@ -87,12 +88,15 @@ class PlayerDetector:
         self.frame_height = frame_size[1]
         self.roi = roi_mask
         self.batch_size = int(detection_cfg.get("batch_size", 1))
+        # On the CPU: plain Ultralytics predict in float32 (the batched path needs CUDA).
+        self.device = device
+        self.half = bool(detection_cfg.half_precision) and device != "cpu"
         self.gpu = None
-        if detection_cfg.get("gpu_preprocessing", False):
+        if detection_cfg.get("gpu_preprocessing", False) and device != "cpu":
             from padel_reid.detection.gpu_batched_yolo import GpuBatchedYolo
 
             self.gpu = GpuBatchedYolo(detection_cfg.model, detection_cfg.image_size, (frame_size[1], frame_size[0]),
-                                      roi_mask, half=detection_cfg.half_precision)
+                                      roi_mask, half=self.half)
         else:
             self.model = YOLO(detection_cfg.model)
 
@@ -105,8 +109,9 @@ class PlayerDetector:
             image, (dx, dy) = frame, (0, 0)
             if self.roi is not None:
                 image, (dx, dy) = self.roi.apply(frame), self.roi.bbox[:2]
-            result = self.model.predict(image, imgsz=self.cfg.image_size, quantize=16 if self.cfg.half_precision else 32,
-                                        device=0, conf=self.cfg.min_confidence, classes=[0], verbose=False)[0]
+            result = self.model.predict(image, imgsz=self.cfg.image_size, quantize=16 if self.half else 32,
+                                        device=0 if self.device == "cuda" else self.device,
+                                        conf=self.cfg.min_confidence, classes=[0], verbose=False)[0]
             out.append((result.boxes.xyxy.cpu().numpy() + np.array([dx, dy, dx, dy], dtype=np.float32),
                         result.boxes.conf.cpu().numpy()))
         return out
@@ -119,17 +124,28 @@ class PlayerDetector:
         return self.filter_detections(*self.raw_detections(frame))
 
     def filter_detections(self, xyxy: np.ndarray, conf: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Partial duplicates, size, foot-point court ROI, then the top-4 by confidence."""
+        """Partial duplicates, size, foot-point court ROI, then the most confident boxes:
+        at most `max_players_per_half` per half and `max_players` in all.
+
+        The per-half cap keeps a low-confidence far player from being pushed out of the
+        top 4 by an extra near box (a duplicate, or someone at the near glass).
+        """
         if len(xyxy) == 0:
             return xyxy.reshape(0, 4), conf
         xyxy, conf = suppress_contained(xyxy, conf)
 
         heights = xyxy[:, 3] - xyxy[:, 1]
-        mask = heights >= self.cfg.min_box_height_px
-        mask &= inside_court_roi(self.mapping.image_to_court(foot_points(xyxy)), self.roi_margin_m)
-        xyxy, conf = xyxy[mask], conf[mask]
-        order = np.argsort(-conf)[: self.cfg.max_players]
-        return xyxy[order], conf[order]
+        court = self.mapping.image_to_court(foot_points(xyxy))
+        mask = (heights >= self.cfg.min_box_height_px) & inside_court_roi(court, self.roi_margin_m)
+        xyxy, conf, side = xyxy[mask], conf[mask], court_side(court[mask, 1])
+        per_half = self.cfg.get("max_players_per_half", self.cfg.max_players)
+        kept, count = [], {0: 0, 1: 0}
+        for i in np.argsort(-conf):
+            if count[side[i]] < per_half and len(kept) < self.cfg.max_players:
+                kept.append(i)
+                count[side[i]] += 1
+        kept = np.asarray(kept, dtype=int)
+        return xyxy[kept], conf[kept]
 
     def run(self, frames) -> pd.DataFrame:
         """frames: iterable of (frame_index, BGR image). Returns one row per tracked detection."""

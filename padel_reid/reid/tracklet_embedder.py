@@ -27,7 +27,7 @@ def select_rows_to_embed(table: pd.DataFrame, stride: int) -> np.ndarray:
 
 def embed_tracklet_detections(cfg, table: pd.DataFrame, paths: CachePaths) -> int:
     """Write embeddings.npz keyed by row index into the tracklet table; returns frames decoded."""
-    embedder = ReidEmbedder(cfg.reid)
+    embedder = ReidEmbedder(cfg.reid, cfg.get("device", "cuda"))
     rows = select_rows_to_embed(table, cfg.reid.embed_stride)
     rows_by_frame = pd.Series(rows).groupby(table["frame"].to_numpy()[rows]).apply(list).to_dict()
 

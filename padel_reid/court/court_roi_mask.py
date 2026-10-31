@@ -61,13 +61,18 @@ def _ground_mask(mapping: CourtMapping, width: int, height: int, margin_m: float
 
 def build_court_roi_mask(mapping: CourtMapping, frame_size: tuple[int, int], margin_m: float,
                          person_height_px: tuple[float, float], headroom: float,
-                         standing_margin_m: float = 0.3) -> CourtRoiMask:
+                         standing_margin_m: float = 0.3,
+                         picture_box: tuple[int, int, int, int] | None = None) -> CourtRoiMask:
     """frame_size = (width, height); person_height_px = (slope, intercept) of height vs foot row.
 
     The ground area uses the full `margin_m` (foot-position jitter), but the upward
     extension for players' bodies starts from a tight outline `standing_margin_m`
     past the glass walls: nobody stands beyond the walls, and extending from the
     wide margin would re-include the neighbouring court above the sidelines.
+
+    picture_box (x0, y0, x1, y1): the part of the frame that holds picture, for
+    pillarboxed / letterboxed footage. The mask is clipped to it, so the crop YOLO
+    sees (resized to detection.image_size) is not mostly empty bars.
     """
     width, height = frame_size
     mask = _ground_mask(mapping, width, height, margin_m)
@@ -79,6 +84,11 @@ def build_court_roi_mask(mapping: CourtMapping, frame_size: tuple[int, int], mar
         top = int(rows[standing[:, x]].min())
         lift = int(headroom * max(slope * top + intercept, 0))
         mask[max(top - lift, 0):top, x] = True
+    if picture_box is not None:
+        px0, py0, px1, py1 = picture_box
+        picture = np.zeros_like(mask)
+        picture[py0:py1, px0:px1] = True
+        mask &= picture
 
     ys, xs = np.where(mask)
     return CourtRoiMask(mask, (int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1))

@@ -8,8 +8,8 @@ split known. Only 8 mappings of such a set to players {1, 2 | 3, 4} respect the
 teams, so linking anchor sets over the match is a small, well-posed matching
 problem:
 
-  1. reference  - the best anchor set fixes the numbering (team A = its near pair,
-                  lower court_x = lower number inside a team)
+  1. reference  - the best anchor set fixes the numbering by court region (team A =
+                  its near pair, left = lower number inside a team; see region_mapping)
   2. growth     - repeatedly accept the anchor set whose best team-consistent
                   mapping beats the runner-up by the largest margin, matching
                   against a gallery grown from every set accepted so far; a set
@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
+from padel_reid.court.homography import COURT_WIDTH_M
 from padel_reid.identity.player_gallery import NUM_PLAYERS, PlayerGallery
 from padel_reid.identity.tracklet_descriptors import TrackletDescriptors
 
@@ -59,15 +60,21 @@ class SeedResult:
     diagnostics: dict = field(default_factory=dict)
 
 
-def find_anchor_sets(table: pd.DataFrame, summary: pd.DataFrame, evidence_seconds: np.ndarray, fps: float,
-                     seeding_cfg, min_members: int = 4) -> list[AnchorSet]:
-    """Sampled moments where `min_members`+ clean tracklets coexist with at most 2 per half."""
+def clean_tracklets(summary: pd.DataFrame, evidence_seconds: np.ndarray, fps: float, seeding_cfg) -> np.ndarray:
+    """Long, untruncated tracklets outside interactions with enough crop evidence."""
     min_frames = seeding_cfg.min_tracklet_seconds * fps
     clean = summary[(summary["frames"] >= min_frames) & ~summary["in_interaction"]
                     & (summary["truncated_fraction"] < 0.5)
                     & (evidence_seconds[summary["tracklet_id"].to_numpy()] > seeding_cfg.min_evidence_seconds)]
+    return clean["tracklet_id"].to_numpy()
+
+
+def find_anchor_sets(table: pd.DataFrame, summary: pd.DataFrame, evidence_seconds: np.ndarray, fps: float,
+                     seeding_cfg, min_members: int = 4) -> list[AnchorSet]:
+    """Sampled moments where `min_members`+ clean tracklets coexist with at most 2 per half."""
+    clean = clean_tracklets(summary, evidence_seconds, fps, seeding_cfg)
     step = max(int(round(seeding_cfg.sample_seconds * fps)), 1)
-    rows = table[table["tracklet_id"].isin(clean["tracklet_id"]) & (table["frame"] % step == 0)]
+    rows = table[table["tracklet_id"].isin(clean) & (table["frame"] % step == 0)]
 
     sets, seen = [], set()
     for frame, group in rows.groupby("frame"):
@@ -95,11 +102,37 @@ def _team_a_near(anchor: AnchorSet, mapping: dict[int, int]) -> bool:
     return any(mapping[t] in TEAMS[0] for t in anchor.near) or any(mapping[t] in TEAMS[1] for t in anchor.far)
 
 
+def region_mapping(near, far, summary: pd.DataFrame, free_players=range(NUM_PLAYERS),
+                   team_a_near: bool = True) -> dict[int, int]:
+    """Number tracklets by court region as seen from the camera: near-left, near-right,
+    far-left, far-right = players 1-4 while team A is on the near half.
+
+    Two tracklets on one half are ordered by court_x; a lone one goes by which side of
+    the centre line it stands on. Only `free_players` are handed out: a tracklet whose
+    own slot is taken gets its partner's slot if that is free, otherwise no number.
+    """
+    free = set(free_players)
+    out = {}
+    for half, team in ((near, TEAMS[0 if team_a_near else 1]), (far, TEAMS[1 if team_a_near else 0])):
+        half = sorted(half, key=lambda t: summary.at[t, "court_x"])
+        left = {t: i == 0 if len(half) == 2 else summary.at[t, "court_x"] < COURT_WIDTH_M / 2
+                for i, t in enumerate(half)}
+        for fallback in (False, True):            # own slots first, so a taken slot can't steal one
+            for t in half:
+                if t in out:
+                    continue
+                own, partner = team if left[t] else team[::-1]
+                for p in ((own, partner) if fallback else (own,)):
+                    if p in free:
+                        out[t] = p
+                        free.discard(p)
+                        break
+    return out
+
+
 def _reference_mapping(anchor: AnchorSet, summary: pd.DataFrame) -> dict[int, int]:
-    """Deterministic numbering: team A = near pair; lower court_x = lower player number."""
-    def by_x(tracklets):
-        return sorted(tracklets, key=lambda t: summary.at[t, "court_x"])
-    return {**dict(zip(by_x(anchor.near), TEAMS[0])), **dict(zip(by_x(anchor.far), TEAMS[1]))}
+    """Deterministic numbering by court region (team A = near pair, left = lower number)."""
+    return region_mapping(anchor.near, anchor.far, summary)
 
 
 class _AnchorLinker:

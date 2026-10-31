@@ -1,0 +1,56 @@
+# Court calibration for Data/court3.mp4 (3840x2160, ~14 fps, static fisheye camera).
+# To use it, set video_path: Data/court3.mp4 and court_config: config/court_court3.yaml
+# in default.yaml. The camera is rolled slightly, so the court lines rise from left
+# to right in the image.
+#
+# Court coordinates are metres: x across the court (0 = left glass as seen from the
+# camera, 10 = right glass), y along the court (0 = far back wall, 10 = net,
+# 20 = near back wall). The near back wall base is at the bottom edge of the frame.
+#
+# Image points were read off frame 0 at full resolution. The lens has strong barrel
+# distortion, so a single radial coefficient (k1) is fitted together with the
+# homography; reprojection error of the landmarks is ~0.21 m (max ~0.5 m at the far
+# back corners). The single-k1 model cannot follow the lens all the way to the frame
+# bottom: the near back wall maps to ~18.5 m instead of 20 m. That area is inside the
+# ROI anyway (it accepts up to 26 m), and the far end and side walls, which separate
+# this court from the neighbouring one, fit well.
+
+image_size: [3840, 2160]
+
+landmarks:            # [image_x, image_y, court_x, court_y]
+  far_back_left:      [1370, 310, 0.0, 0.0]
+  far_back_right:     [2335, 225, 10.0, 0.0]
+  far_service_left:   [1307, 382, 0.0, 3.05]
+  far_service_centre: [1825, 300, 5.0, 3.05]
+  far_service_right:  [2355, 272, 10.0, 3.05]
+  net_centre:         [1850, 573, 5.0, 10.0]
+  near_service_left:  [605, 1608, 0.0, 16.95]
+  near_service_centre: [1955, 1565, 5.0, 16.95]
+  near_service_right: [3290, 1325, 10.0, 16.95]
+
+# Extra points on the (straight) near service line, court_y = 16.95. They only
+# constrain the lens distortion fit.
+near_service_line_samples:
+  - [800, 1609]
+  - [1000, 1608]
+  - [1200, 1608]
+  - [1500, 1605]
+  - [1700, 1590]
+  - [2200, 1535]
+  - [2400, 1505]
+  - [2600, 1480]
+  - [2800, 1445]
+  - [3000, 1398]
+  - [3200, 1357]
+
+# Court ROI. Before detection, everything outside the court (+ margin) and the space
+# a standing player occupies above it is painted grey, so the players on the
+# neighbouring court seen through the glass are never detected. After detection,
+# boxes whose foot point maps outside the court + margin are dropped as well.
+roi_margin_m: 1.5
+# Player box height in pixels vs the image row of the feet (upper envelope of YOLO
+# boxes on this video: ~210 px at the far baseline, ~530 px at the near service line),
+# and the extra headroom kept above it for jumps and raised paddles.
+person_height_px: [0.24, 150.0]   # height = 0.24 * foot_row + 150
+roi_headroom: 1.15
+roi_standing_margin_m: 0.3        # bodies are only extended upward from 0.3 m past the walls

@@ -5,8 +5,12 @@ already shown on screen keep their player (fixed labels) and team-side windows
 already shown keep their side, so the solver can only decide what has not been
 displayed yet; IDs never flip on screen.
 
-Seeding is online too: until the first moment with 4 clean players (2 per half)
-nothing is numbered and boxes show "?". That anchor set fixes Player 1-4. Every
+Numbering is by court region (`live.region_numbering`): as soon as a player is in
+clear view they get the number of their region - near-left, near-right, far-left,
+far-right = Player 1-4 - and later arrivals take the free number of their region.
+These become the fixed reference labels. With region numbering off, nothing is
+numbered until the first moment with 4 clean players (2 per half); that anchor set
+fixes Player 1-4. Until a tracklet is numbered its box shows "?". Every
 `reseed_seconds` a separate thread re-runs the anchor-set seeding over the whole
 session, growing from that reference set exactly as the offline seeding does, and
 the gallery is rebuilt from the result. The solver's own decisions are not fed
@@ -25,13 +29,13 @@ import traceback
 import numpy as np
 
 from padel_reid.common.config_loader import ConfigNode
-from padel_reid.identity.anchor_seeding import TEAMS, discover_seed_labels, find_anchor_sets
+from padel_reid.identity.anchor_seeding import TEAMS, discover_seed_labels, find_anchor_sets, region_mapping
 from padel_reid.identity.exit_reentry_handler import exit_entry_flags
 from padel_reid.identity.global_assignment import (AssignmentInputs, drop_conflicting_labels,
                                                    exclusivity_constraints, solve_global_assignment)
 from padel_reid.identity.identity_pipeline import (appearance_log_prob, confident_assignments, relative_cost,
                                                    window_side_counts)
-from padel_reid.identity.player_gallery import PlayerGallery
+from padel_reid.identity.player_gallery import NUM_PLAYERS, PlayerGallery
 from padel_reid.identity.predictive_relinker import calibrate_gate, default_gate, find_relink_candidates
 from padel_reid.live.live_history import LiveHistory, Snapshot
 
@@ -44,6 +48,8 @@ class SlidingWindowAssigner:
         self.reseed_frames = int(live.reseed_seconds * fps)
         self.reseed_history_frames = int(live.reseed_history_seconds * fps) if live.reseed_history_seconds else 10 ** 9
         self.gallery_from_shown = live.gallery_from_shown
+        self.region_numbering = live.region_numbering
+        self.region_min_frames = int(live.region_min_seconds * fps)
         self.gate_frames = int(live.gate_recalibrate_seconds * fps)
         self.side_window_frames = int(cfg.identity.window_seconds * fps)
         self.relink_gap = int(cfg.identity.relink_max_gap_seconds * fps)
@@ -73,6 +79,49 @@ class SlidingWindowAssigner:
             state.seeds = snap.to_global(seed.seed_labels)
             state.seeding.append({"frame": snap.frontier, "kind": "initial", **seed.diagnostics})
         self.last_reseed = snap.frontier
+
+    def _number_by_region(self, snap: Snapshot) -> None:
+        """Give still-free player numbers to new tracklets by court region (see region_mapping).
+
+        A tracklet is numbered only while every already-numbered player of the team on its
+        half is visible at the same time; otherwise it may be one of them after a break in
+        the track (far players fragment a lot), and the solver decides by appearance instead.
+        """
+        with self.history.lock:
+            state = self.history.state
+            reference = snap.to_local(state.reference)
+            shown = snap.to_local(state.committed)
+            labels = snap.to_local({**state.latest_labels, **state.committed, **state.reference})
+            sides = dict(state.latest_sides)
+        free = [p for p in range(NUM_PLAYERS) if p not in reference.values()]
+        if not free:
+            return
+        team_a_near = sides[max(sides)] if sides else True
+        summary = snap.summary
+        start, end = summary["start_frame"], summary["end_frame"]
+        alive = summary[(summary["frames"] >= self.region_min_frames) & ~summary["in_interaction"]
+                        & (summary["truncated_fraction"] < 0.5) & (end >= snap.frontier - self.region_min_frames)]
+        new = {True: [], False: []}
+        for t in alive["tracklet_id"]:
+            if t in reference or t in shown:
+                continue
+            near = bool(summary.at[t, "near_fraction"] > 0.5)
+            team = TEAMS[0 if near == team_a_near else 1]
+            numbered = {p for p in team if p not in free}
+            mates = {k for u, k in labels.items()
+                     if u != t and k in numbered and start[u] <= end[t] and end[u] >= start[t]}
+            if mates == numbered:
+                new[near].append(t)
+        mapping = region_mapping(new[True], new[False], summary, free, team_a_near)
+        if not mapping:
+            return
+        with self.history.lock:
+            state.reference.update(snap.to_global(mapping))
+            complete = len(set(state.reference.values())) == NUM_PLAYERS
+            state.seeding.append({"frame": snap.frontier, "kind": "region",
+                                  "numbered": {int(snap.global_ids[t]): k + 1 for t, k in mapping.items()}})
+        if complete:
+            self.last_reseed = -10 ** 9          # all 4 known: grow the gallery now, not in reseed_seconds
 
     def reseed(self) -> None:
         """Re-derive the gallery seeds from all anchor sets so far (runs on the seeding thread)."""
@@ -126,7 +175,9 @@ class SlidingWindowAssigner:
                 self.history.state.solved_through = self.history.frontier
             return
         state = self.history.state
-        if not state.reference:
+        if self.region_numbering:
+            self._number_by_region(snap)
+        elif not state.reference:
             self._initial_seeding(snap)
         with self.history.lock:
             reference, seeds = dict(state.reference), dict(state.seeds)
@@ -162,6 +213,11 @@ class SlidingWindowAssigner:
             with self.history.lock:
                 state.solved_through = snap.frontier
             return
+        numbered = set(reference.values())
+        if self.region_numbering and len(numbered) < NUM_PLAYERS:
+            # A player not numbered yet has no gallery: the solver only puts them where it had to
+            # (exclusivity). Show "?" there until _number_by_region gives that tracklet its region.
+            result.labels = {t: k for t, k in result.labels.items() if k in numbered}
         confident_now = confident_assignments(result.labels, cost, summary, snap.evidence_seconds)
         for t, k in result.labels.items():          # why each label was chosen (commit rule, diagnostics)
             self.decisions[int(snap.global_ids[t])] = (k, cost[t].copy(), float(snap.evidence_seconds[t]),

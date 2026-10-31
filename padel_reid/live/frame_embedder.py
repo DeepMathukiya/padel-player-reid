@@ -21,8 +21,8 @@ _COL = {name: i for i, name in enumerate(TRACKLET_COLUMNS)}
 
 
 class FrameEmbedder:
-    def __init__(self, reid_cfg, live_cfg):
-        self.embedder = ReidEmbedder(reid_cfg)
+    def __init__(self, reid_cfg, live_cfg, device: str = "cuda"):
+        self.embedder = ReidEmbedder(reid_cfg, device)
         self.stride = reid_cfg.embed_stride
         self.batch = live_cfg.embed_batch
         self.max_wait = live_cfg.embed_max_wait_frames

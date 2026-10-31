@@ -1,23 +1,29 @@
-video_path: Data/game-24412_77-107min.mp4
+# video_path: Data/game-24412_77-107min.mp4
+
+video_path: Data/court2.mp4
+# video_path: Data/court3.mp4        # with court_config: config/court_court3.yaml
+
 court_config: config/court.yaml
 cache_dir: cache
 output_dir: outputs
+device: cuda                        # YOLO + Re-ID on the NVIDIA GPU; cpu = run without one (several times slower)
 
 # Optional frame range (inclusive start, exclusive end); null = whole video.
 start_frame: null
 end_frame: null
 
 detection:
-  model: yolo11s.pt
+  model: yolo11m.pt                 # larger than s for small far players, still fast (yolo11l/x: slower)
   tracker_config: config/botsort_padel.yaml
-  image_size: 960                   # one run; finds both far players in 97% of frames (640: 94%)
+  image_size: 960                   # long side of the court-ROI crop fed to YOLO (game-24412 with yolo11s: both far players in 97% of frames)
   mask_outside_court: true          # grey out everything outside the court ROI before YOLO (court/court_roi_mask.py)
-  gpu_preprocessing: true           # crop/mask/resize on the GPU (detection/gpu_batched_yolo.py)
+  gpu_preprocessing: true           # crop/mask/resize on the GPU (detection/gpu_batched_yolo.py); ignored with device: cpu
   batch_size: 8                     # frames per YOLO forward pass; tracking stays frame by frame
-  half_precision: true
+  half_precision: true              # GPU only; the CPU always runs float32
   min_confidence: 0.2
-  min_box_height_px: 40
+  min_box_height_px: 25             # far players at the back glass of a small court are ~30 px tall
   max_players: 4
+  max_players_per_half: 2           # an extra near box can't push a far player out of the top 4
 
 tracking:
   interaction_iou: 0.05          # boxes overlapping more than this = interaction
@@ -70,6 +76,9 @@ live:
   reseed_seconds: 30              # re-run anchor-set seeding (and grow the gallery) this often ...
   reseed_history_seconds: null    # ... over this much recent history (null = the whole session)
   gallery_from_shown: false       # also learn from confidently shown tracklets (self-training)
+  region_numbering: true          # number players by court region (near-left/right = 1/2, far-left/right = 3/4)
+                                  # as they appear; false = wait for all 4 in clear view
+  region_min_seconds: 0.5         # a tracklet must last this long before its region gives it a number
   gate_recalibrate_seconds: 120   # recalibrate the re-link gate from clean tracklets seen so far
   realtime_playback: true         # file sources: pace at the video fps (false = as fast as possible)
   playback_speed: 1.0             # file sources: 2.0 = twice the video fps (no frames dropped when != 1)
