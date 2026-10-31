@@ -21,7 +21,8 @@ import pandas as pd
 from padel_reid.common.cache_paths import CachePaths
 from padel_reid.court.court_side import court_side
 from padel_reid.detection.player_detector import DETECTION_COLUMNS
-from padel_reid.identity.tracklet_descriptors import TrackletDescriptors, build_tracklet_descriptors
+from padel_reid.identity.tracklet_descriptors import (TrackletDescriptors, build_tracklet_descriptors,
+                                                     center_by_side)
 from padel_reid.live.online_tracklet_builder import TRACKLET_COLUMNS
 from padel_reid.tracking.interaction_detector import group_interaction_events
 from padel_reid.tracking.tracklet_builder import summarize_tracklets
@@ -64,8 +65,15 @@ class IdentityState:
 
 
 class LiveHistory:
-    def __init__(self, fps: float, frame_size: tuple[int, int], border_fraction: float, embed_stride: int):
+    def __init__(self, fps: float, frame_size: tuple[int, int], border_fraction: float, embed_stride: int,
+                 side_centering: bool = False):
         self.lock = threading.RLock()
+        self.side_centering = side_centering
+        # Session-wide quality-weighted sums of normalised crop descriptors per half (far 0, near 1):
+        # snapshot queries and the gallery are centred with the same means (tracklet_descriptors).
+        self.side_sums: list[np.ndarray] | None = None       # [embedding (2, D), colour (2, C)]
+        self.side_weight = np.zeros(2)
+        self.side_crops = np.zeros(2, np.int64)
         self.fps, self.frame_size = fps, frame_size
         self.border_fraction, self.embed_stride = border_fraction, embed_stride
         self.rows: list[tuple] = []
@@ -108,6 +116,37 @@ class LiveHistory:
         with self.lock:
             for row_index, embedding, color, quality in crops:
                 self.crops.setdefault(self.rows[row_index][_TRACKLET], []).append((row_index, embedding, color, quality))
+                self._add_side_sums(int(self.rows[row_index][_SIDE]), embedding, color, quality)
+
+    def _add_side_sums(self, side: int, embedding: np.ndarray, color: np.ndarray, quality: float) -> None:
+        if self.side_sums is None:
+            self.side_sums = [np.zeros((2, len(embedding))), np.zeros((2, len(color)))]
+        w = float(quality) + 1e-3
+        for sums, x in zip(self.side_sums, (embedding, color)):
+            x = x.astype(np.float64)
+            sums[side] += w * x / max(np.linalg.norm(x), 1e-6)
+        self.side_weight[side] += w
+        self.side_crops[side] += 1
+
+    def side_means(self) -> tuple[np.ndarray, np.ndarray] | None:
+        """(embedding, colour) per-half means of every crop so far; None when centring is off."""
+        with self.lock:
+            if not self.side_centering or self.side_sums is None:
+                return None
+            ok = (self.side_crops >= 2)[:, None]
+            return tuple(np.where(ok, sums / np.maximum(self.side_weight[:, None], 1e-6), 0.0).astype(np.float32)
+                         for sums in self.side_sums)
+
+    def centered_crops(self, crops: list[tuple], means: tuple[np.ndarray, np.ndarray] | None
+                       ) -> tuple[np.ndarray, np.ndarray]:
+        """(embeddings, colours) of a tracklet's crops, centred by each crop's half when means is given."""
+        emb = np.stack([c[1] for c in crops]).astype(np.float32)
+        color = np.stack([c[2] for c in crops]).astype(np.float32)
+        if means is None:
+            return emb, color
+        with self.lock:
+            side = np.asarray([self.rows[c[0]][_SIDE] for c in crops])
+        return center_by_side(emb, side, means[0]), center_by_side(color, side, means[1])
 
     def close(self, tracklet: int) -> None:
         with self.lock:
@@ -159,7 +198,8 @@ class LiveHistory:
             "colors": np.stack([c[2] for c in crops]) if crops else np.zeros((0, 1), np.float16),
             "quality": np.asarray([c[3] for c in crops], np.float32),
         }
-        descriptors = build_tracklet_descriptors(table, embeddings, len(tracklets))
+        means = self.side_means()
+        descriptors = build_tracklet_descriptors(table, embeddings, len(tracklets), means is not None, means)
         evidence_seconds = descriptors.evidence * self.embed_stride / self.fps
         return Snapshot(table, summary, descriptors, evidence_seconds, np.asarray(tracklets), local_ids, frontier)
 

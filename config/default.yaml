@@ -38,6 +38,8 @@ reid:
   batch_size: 64
   color_weight: 0.2
   bank_size: 100
+  side_centering: true            # remove the per-half mean look so a player matches themselves
+                                  # near and far (changeovers); offline assign and live mode
 
 identity:
   seeding:                        # label-free gallery seeds (identity/anchor_seeding.py)

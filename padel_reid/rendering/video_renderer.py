@@ -9,7 +9,8 @@ import pandas as pd
 from tqdm import tqdm
 
 from padel_reid.common.cache_paths import CachePaths
-from padel_reid.common.video_io import VideoWriter, iterate_frames, read_video_info, resolve_frame_range
+from padel_reid.common.video_io import (VideoWriter, iterate_frames, prefetch_frames, read_video_info,
+                                        resolve_frame_range)
 from padel_reid.rendering.frame_overlay import PLAYER_COLORS, draw_overlay
 
 
@@ -28,8 +29,8 @@ def render_video(cfg, table: pd.DataFrame, output: Path, start: int | None = Non
     by_frame = {f: g for f, g in table[(table["frame"] >= start) & (table["frame"] < end)].groupby("frame")}
 
     with VideoWriter(output, info.fps, (info.width, info.height)) as writer:
-        for frame_index, frame in tqdm(iterate_frames(cfg.video_path, start, end), total=end - start,
-                                       desc="render", unit="frame"):
+        for frame_index, frame in tqdm(prefetch_frames(iterate_frames(cfg.video_path, start, end)),
+                                       total=end - start, desc="render", unit="frame"):
             rows = by_frame.get(frame_index)
             status = {p: "not detected" for p in PLAYER_COLORS}
             for p, exit_frame, enter_frame in absences:

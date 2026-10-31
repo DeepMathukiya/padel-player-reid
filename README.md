@@ -81,6 +81,38 @@ python -m padel_reid heldout     # IDSW / IDF1 / MOTA / HOTA      -> outputs/met
 python -m padel_reid charts      # README / report figures        -> docs/images/
 ```
 
+### Run all three videos
+
+Each clip has its own court calibration, so pass the matching `court_config` and give every run its own cache and output folder:
+
+```bash
+# Data/court2.mp4 (1920x1080, pillarboxed portrait clip)
+python -m padel_reid run --set video_path=Data/court2.mp4 court_config=config/court.yaml cache_dir=cache_court2 output_dir=outputs_court2
+
+# Data/court3.mp4 (3840x2160, ~14 fps)
+python -m padel_reid run --set video_path=Data/court3.mp4 court_config=config/court_court3.yaml cache_dir=cache_court3 output_dir=outputs_court3
+
+# Data/game-24412_77-107min.mp4 (1920x1080, 30-min match)
+python -m padel_reid run --set video_path=Data/game-24412_77-107min.mp4 court_config=config/court_game-24412.yaml cache_dir=cache_game-24412 output_dir=outputs_game-24412
+```
+
+Each output video is `<output_dir>/padel_player_ids.mp4`.
+
+Live mode takes the same settings. It plays each file frame by frame with the 2-second display delay and writes `<output_dir>/padel_player_ids_live.mp4`:
+
+```bash
+# Data/court2.mp4
+python -m padel_reid live --set video_path=Data/court2.mp4 court_config=config/court.yaml cache_dir=cache_court2_live output_dir=outputs_court2_live
+
+# Data/court3.mp4
+python -m padel_reid live --set video_path=Data/court3.mp4 court_config=config/court_court3.yaml cache_dir=cache_court3_live output_dir=outputs_court3_live
+
+# Data/game-24412_77-107min.mp4
+python -m padel_reid live --set video_path=Data/game-24412_77-107min.mp4 court_config=config/court_game-24412.yaml cache_dir=cache_game-24412_live output_dir=outputs_game-24412_live
+```
+
+Add `live.realtime_playback=false` to process a file as fast as possible instead of at video speed, or `live.display=false` to run without the preview window.
+
 ### Common variations
 
 ```bash

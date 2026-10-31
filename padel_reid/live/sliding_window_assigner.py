@@ -152,13 +152,15 @@ class SlidingWindowAssigner:
     def _gallery(self, labels: dict[int, int], descriptor_dims: tuple[int, int]) -> PlayerGallery:
         gallery = PlayerGallery(*descriptor_dims, self.cfg.reid.bank_size, self.cfg.reid.color_weight)
         evidence = self.history.gallery_evidence(labels)
+        means = self.history.side_means()
         for t in sorted(evidence, key=lambda t: evidence[t][0]):
             _, near, crops = evidence[t]
             cached = self._crop_cache.get(t)
-            if cached is None or cached[0] != len(crops):
-                emb = np.stack([c[1] for c in crops]).astype(np.float32)
+            # The side means drift as crops arrive, so centred crops are only cached without centring.
+            if cached is None or cached[0] != len(crops) or means is not None:
+                emb, colors = self.history.centered_crops(crops, means)
                 quality = np.asarray([c[3] for c in crops], np.float32) + 1e-3
-                color = (np.stack([c[2] for c in crops]).astype(np.float32) * quality[:, None]).sum(0) / quality.sum()
+                color = (colors * quality[:, None]).sum(0) / quality.sum()
                 cached = self._crop_cache[t] = (len(crops), (emb, quality, color / max(np.linalg.norm(color), 1e-6)))
             emb, quality, color = cached[1]
             gallery.add(labels[t], near, emb, quality, color)

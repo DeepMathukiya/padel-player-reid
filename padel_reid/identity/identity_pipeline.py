@@ -83,7 +83,7 @@ def assign_identities(cfg, paths: CachePaths,
     summary.index = summary["tracklet_id"].to_numpy()
     embeddings = np.load(paths.embeddings)
     num = len(summary)
-    full = build_tracklet_descriptors(table, embeddings, num)
+    full = build_tracklet_descriptors(table, embeddings, num, cfg.reid.get("side_centering", False))
     evidence_seconds = full.evidence * cfg.reid.embed_stride / fps
 
     if seed_labels_override is None:

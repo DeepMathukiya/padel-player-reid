@@ -72,7 +72,8 @@ def run_live(cfg, source: str | None = None) -> dict:
     detector = build_player_detector(cfg, frame_size=frame_size)
     tracker = build_tracker(cfg.detection.tracker_config)
     builder = OnlineTrackletBuilder(cfg.tracking)
-    history = LiveHistory(fps, frame_size, cfg.identity.border_margin_fraction, cfg.reid.embed_stride)
+    history = LiveHistory(fps, frame_size, cfg.identity.border_margin_fraction, cfg.reid.embed_stride,
+                          cfg.reid.get("side_centering", False))
     output_video = Path(cfg.output_dir) / "padel_player_ids_live.mp4" if cfg.live.write_video else None
     emitter = FrameEmitter(cfg, history, fps, frame_size, output_video, cfg.live.display)
     perception = _Perception(builder, FrameEmbedder(cfg.reid, cfg.live, cfg.get("device", "cuda")), history, emitter)

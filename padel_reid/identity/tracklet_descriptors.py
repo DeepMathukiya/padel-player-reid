@@ -25,12 +25,48 @@ def _normalize(x: np.ndarray) -> np.ndarray:
     return x / np.maximum(np.linalg.norm(x, axis=-1, keepdims=True), 1e-6)
 
 
-def build_tracklet_descriptors(table: pd.DataFrame, embeddings_npz, num_tracklets: int) -> TrackletDescriptors:
-    """Quality-weighted mean descriptor over all embedded crops of each tracklet."""
+def side_means(features: np.ndarray, side: np.ndarray, weight: np.ndarray) -> np.ndarray:
+    """(2, D) quality-weighted mean of the L2-normalised crop descriptors per half (far = 0,
+    near = 1); zero for a half with fewer than 2 crops, which then stays uncentred."""
+    features = _normalize(features)
+    means = np.zeros((2, features.shape[1]), np.float32)
+    for value in (0, 1):
+        mask = side == value
+        if mask.sum() >= 2:
+            means[value] = (features[mask] * weight[mask, None]).sum(0) / weight[mask].sum()
+    return means
+
+
+def center_by_side(features: np.ndarray, side: np.ndarray, means: np.ndarray) -> np.ndarray:
+    """Subtract each court half's mean crop descriptor (side_means), then re-normalise.
+
+    Near crops are large and sharp, far crops small and blurry, so raw descriptors
+    mostly encode the half a crop came from: any two near players look more alike
+    than one player seen near and then far. After a changeover that makes the
+    newcomers on a half match whoever stood there before. Removing the per-half mean
+    leaves what tells the people apart, so a player matches themselves across halves.
+    """
+    return _normalize(_normalize(features) - means[side.astype(int)])
+
+
+def build_tracklet_descriptors(table: pd.DataFrame, embeddings_npz, num_tracklets: int,
+                               side_centering: bool = False,
+                               means: tuple[np.ndarray, np.ndarray] | None = None) -> TrackletDescriptors:
+    """Quality-weighted mean descriptor over all embedded crops of each tracklet.
+
+    means: (embedding, colour) side_means to centre with; None = computed from these crops.
+    Live mode passes its session-wide means so queries and gallery are centred alike.
+    """
     rows = embeddings_npz["rows"]
     deep = embeddings_npz["embeddings"].astype(np.float32)
     color = embeddings_npz["colors"].astype(np.float32)
     quality = embeddings_npz["quality"].astype(np.float32) + 1e-3
+    if side_centering and len(rows):
+        side = table["side"].to_numpy()[rows]
+        deep_means, color_means = means if means is not None else (side_means(deep, side, quality),
+                                                                   side_means(color, side, quality))
+        deep = center_by_side(deep, side, deep_means)
+        color = center_by_side(color, side, color_means)
     tracklet_of_row = table["tracklet_id"].to_numpy()[rows]
 
     order = np.lexsort((rows, tracklet_of_row))
